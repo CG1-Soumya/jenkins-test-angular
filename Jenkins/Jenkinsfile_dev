@@ -1,0 +1,94 @@
+node() {
+
+  try {
+
+    stage('Checkout Branches in Git') {
+      git branch: 'dev',
+        credentialsId: 'JenkinsAdmin',
+        url: 'git@github.com:CG1-Soumya/jenkins-test.git'
+    }
+
+    stage('Install dependencies') {
+      nodejs('nodejs14') {
+        sh 'npm install'
+        // sh 'npm update'
+      }
+    }
+
+    stage('Build Project') {
+      nodejs('nodejs14') {
+        sh "npm run jenkinsBuild"
+        echo 'Build completed'
+        sh "npm run sentry:sourcemaps"
+        echo 'sentry:sourcemaps completed'
+      }
+    }
+
+    stage('Build war file') {
+      sh "ant -buildfile build.xml"
+      // sh "-Dorg.jenkinsci.plugins.durabletask.BourneShellScript.LAUNCH_DIAGNOSTICS=true"
+      // sh "export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64/"
+      // sh "export PATH=$PATH:/usr/lib/jvm/java-11-openjdk-amd64/bin/"
+    }
+
+    stage('Stash changes') {
+      stash includes: "jenkins.war", name: 'jenkinsBuildArtifacts'
+    }
+
+    stage('Branch Dev') {
+      node('dev-jbossuser') {
+        stage('Unstash in Dev') {
+          dir("/home/jbossuser/backup/deploy/") {
+            unstash name: 'jenkinsBuildArtifacts'
+            echo 'Unstashing Completed'
+          }
+        }
+        stage('Copy the war to deployments') {
+          // sh "Dorg.jenkinsci.plugins.durabletask.BourneShellScript.LAUNCH_DIAGNOSTICS=true"
+          // sh "export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64/"
+          // sh "export PATH=$PATH:/usr/lib/jvm/java-11-openjdk-amd64/bin/"
+          sh "cp -p /home/jbossuser/backup/deploy/jenkins.war /home/jbossuser/wildfly/deployments"
+          sh "cp -p /home/jbossuser/backup/deploy/jenkins.war /usr/local/wildfly-8.2.1.Final/standalone/deployments"
+        }
+      }
+    }
+
+  } catch (any) {
+    currentBuild.result = 'FAILURE'
+  } finally {
+    sendMailNotification()
+  }
+}
+
+def sendMailNotification() {
+  stage("Send Mail Notification") {
+    def USER_ID = sh(
+      script: 'git --no-pager show -s --format=\'%an\'',
+      returnStdout: true
+    ).trim()
+    def USER_NAME = USER_ID.split("-")[1]
+    def USER_EMAIL = getUserEmail(USER_NAME)
+    def emailSubject = "${USER_NAME} initiated ${JOB_NAME} - Build # ${BUILD_NUMBER} - ${currentBuild.currentResult}!"
+    def emailBody = "${USER_NAME} initiated ${JOB_NAME} - Build # ${BUILD_NUMBER} - ${currentBuild.currentResult}\r\n Check console output at ${BUILD_URL}consoleText to view the results."
+    def attachLogFl = false
+    if (currentBuild.result == 'FAILURE') {
+      attachLogFl = true
+    }
+    emailext(attachLog: "${attachLogFl}",
+      body: "${emailBody}",
+      subject: "${emailSubject}",
+      to: "${USER_EMAIL}")
+  }
+}
+
+def getUserEmail(String userName) {
+  if (userName == "Abhilash") {
+    return "abhilash.n@mondcloud.com"
+  } else if (userName == "Soumya") {
+    return "soumya.km@mondcloud.com"
+  }else if (userName == "Keerthi") {
+    return "keerthi.ms@mondcloud.com"
+  } else {
+    return 'abhilash.n@mondcloud.com'
+  }
+}
